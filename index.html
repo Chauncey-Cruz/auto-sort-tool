@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Auto-Sort Client Details</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    margin: 0;
+    padding: 24px;
+    color: #222;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { color: #666; margin-top: 0; margin-bottom: 20px; max-width: 700px; }
+
+  .layout {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .panel {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    flex: 1 1 420px;
+    max-width: 520px;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 6px;
+    font-weight: bold;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 13px;
+    resize: vertical;
+    font-family: Arial, sans-serif;
+  }
+
+  .hint {
+    font-size: 12px;
+    color: #888;
+    margin-top: 6px;
+    line-height: 1.5;
+  }
+
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    padding: 10px 20px;
+    background: #2563eb;
+    color: white;
+    margin-top: 12px;
+  }
+  button:hover { background: #1d4ed8; }
+
+  .copy-btn {
+    background: #16a34a;
+    font-size: 13px;
+    padding: 6px 12px;
+    margin-top: 0;
+  }
+  .copy-btn:hover { background: #128a3e; }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    border-left: 4px solid #4b5d47;
+    padding: 8px 10px;
+    background: #f9f9f7;
+    border-radius: 6px;
+  }
+  .field-row.uncertain { border-left-color: #d99a00; background: #fffaf0; }
+  .field-row.empty { border-left-color: #ccc; background: #fafafa; }
+
+  .field-label {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    color: #4b5d47;
+    width: 110px;
+    flex-shrink: 0;
+  }
+  .field-row.uncertain .field-label { color: #a06e00; }
+
+  .field-value {
+    flex: 1;
+    font-size: 13px;
+    padding: 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+  }
+
+  .leftover-box {
+    margin-top: 16px;
+    padding: 10px;
+    background: #fdeaea;
+    border-left: 4px solid #d0453a;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #7a2b23;
+  }
+  .leftover-box strong { display: block; margin-bottom: 4px; }
+
+  .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: #d99a00;
+    color: white;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Auto-Sort Client Details</h1>
+<p class="sub">Paste a raw message from a client (however messy — a Messenger chat, an email, a list) and this will try to detect and sort the details into the right fields. Always double-check the results before using them — this uses pattern-matching, not true understanding, so it won't catch everything.</p>
+
+<div class="layout">
+
+  <div class="panel">
+    <label>Paste raw client message here</label>
+    <textarea id="rawInput" placeholder="Hi! We'd like to order an invitation. Our names are Juan Dela Cruz and Maria Santos. The wedding is on July 4 2027, starting at 2:00 in the afternoon. Ceremony will be at St. Peter Parish, 123 Sample St., Quezon City. Reception follows at Garden Villa, 456 Sample Ave., Quezon City."></textarea>
+    <p class="hint">Works best with full sentences containing dates, times, venue names, and addresses — the more natural the message, the better it can guess.</p>
+    <button onclick="sortDetails()">Auto-Sort Details</button>
+  </div>
+
+  <div class="panel" id="resultsPanel" style="display:none;">
+    <label>Sorted Results (edit anything before copying)</label>
+    <div id="fieldsContainer"></div>
+    <div id="leftoverContainer"></div>
+    <button class="copy-btn" onclick="copyAsRow()">Copy as Spreadsheet Row (tab-separated)</button>
+  </div>
+
+</div>
+
+<script>
+  const MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december";
+
+  function sortDetails() {
+    let text = document.getElementById("rawInput").value.trim();
+    if (text === "") {
+      alert("Paste a message first.");
+      return;
+    }
+
+    const found = {
+      Names: null,
+      Date: null,
+      Time: null,
+      Venue: null,
+      Address: null
+    };
+    const uncertain = new Set();
+
+    let workingText = text;
+
+    function extract(regex, key, groupIndex = 0) {
+      const match = workingText.match(regex);
+      if (match) {
+        found[key] = match[groupIndex].trim();
+        workingText = workingText.replace(match[0], " ");
+        return true;
+      }
+      return false;
+    }
+
+    // ---- DATE detection ----
+    const dateRegex1 = new RegExp(`\\b(${MONTHS})\\s+\\d{1,2}(st|nd|rd|th)?,?\\s+\\d{4}\\b`, "i");
+    const dateRegex2 = new RegExp(`\\b\\d{1,2}(st|nd|rd|th)?\\s+of\\s+(${MONTHS})\\s+\\d{4}\\b`, "i");
+    const dateRegex3 = /\b\d{4}-\d{2}-\d{2}\b/;
+    if (!extract(dateRegex1, "Date")) {
+      if (!extract(dateRegex2, "Date")) {
+        extract(dateRegex3, "Date");
+      }
+    }
+
+    // ---- TIME detection ----
+    const timeRegex1 = /\b\d{1,2}:\d{2}\s*(in the (morning|afternoon|evening)|am|pm|AM|PM)\b/;
+    const timeRegex2 = /\b\d{1,2}\s*(am|pm|AM|PM)\b/;
+    const timeRegex3 = /\bstarting at\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/i;
+    if (!extract(timeRegex1, "Time")) {
+      if (!extract(timeRegex3, "Time")) {
+        extract(timeRegex2, "Time");
+      }
+    }
+
+    // ---- VENUE detection ----
+    const venueKeywords = "Parish|Church|Chapel|Hotel|Garden|Grounds|Villa|Resort|Hall|Pavilion|Cathedral|Farm|Clubhouse|Ballroom";
+    const venueRegex = new RegExp(`\\b([A-Z][A-Za-z\\.]*\\s?){1,4}(${venueKeywords})\\b`);
+    extract(venueRegex, "Venue");
+
+    // ---- ADDRESS detection ----
+    const addressRegex = /\b\d{1,5}\s+[A-Za-z0-9\.\,\s]+(St\.|Street|Ave\.|Avenue|Rd\.|Road|Blvd\.|Brgy\.|Barangay)[A-Za-z0-9\.\,\s]*\b/;
+    extract(addressRegex, "Address");
+
+    // ---- NAMES detection ----
+    const namesRegex1 = /\b([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,3})\s+(and|&)\s+([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,3})\b/;
+    const nameMatch = workingText.match(namesRegex1);
+    if (nameMatch) {
+      const candidate = nameMatch[0];
+      const commonFalsePositives = /\b(Reception|Ceremony|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i;
+      if (!commonFalsePositives.test(candidate)) {
+        found.Names = candidate.trim();
+        workingText = workingText.replace(nameMatch[0], " ");
+      } else {
+        uncertain.add("Names");
+      }
+    }
+
+    Object.keys(found).forEach(key => {
+      if (found[key] && found[key].length < 3) uncertain.add(key);
+    });
+
+    renderResults(found, uncertain, workingText, text);
+  }
+
+  function renderResults(found, uncertain, leftover, originalText) {
+    const container = document.getElementById("fieldsContainer");
+    container.innerHTML = "";
+
+    Object.keys(found).forEach(key => {
+      const value = found[key];
+      const row = document.createElement("div");
+      const isUncertain = uncertain.has(key);
+      row.className = "field-row" + (value ? (isUncertain ? " uncertain" : "") : " empty");
+
+      const label = document.createElement("div");
+      label.className = "field-label";
+      label.textContent = key;
+      if (isUncertain) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = "check this";
+        label.appendChild(badge);
+      }
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "field-value";
+      input.id = "field_" + key;
+      input.value = value || "";
+      input.placeholder = value ? "" : "Not detected — fill in manually";
+
+      row.appendChild(label);
+      row.appendChild(input);
+      container.appendChild(row);
+    });
+
+    const leftoverContainer = document.getElementById("leftoverContainer");
+    const cleanedLeftover = leftover.replace(/\s+/g, " ").trim();
+    if (cleanedLeftover.length > 15) {
+      leftoverContainer.innerHTML = `
+        <div class="leftover-box">
+          <strong>Unmatched text (review manually — may contain missed details):</strong>
+          ${cleanedLeftover}
+        </div>
+      `;
+    } else {
+      leftoverContainer.innerHTML = "";
+    }
+
+    document.getElementById("resultsPanel").style.display = "block";
+  }
+
+  function copyAsRow() {
+    const keys = ["Names", "Date", "Time", "Venue", "Address"];
+    const values = keys.map(key => document.getElementById("field_" + key).value);
+    const row = values.join("\t");
+    navigator.clipboard.writeText(row).then(() => {
+      alert("Copied! Paste directly into your spreadsheet as a new row.");
+    }).catch(() => {
+      alert("Couldn't copy automatically — select and copy the values manually.");
+    });
+  }
+</script>
+
+</body>
+</html>
